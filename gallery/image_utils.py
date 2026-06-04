@@ -26,14 +26,6 @@ def get_public_image_url(file_field):
         return None
 
     try:
-        url = file_field.url
-    except (AttributeError, ValueError, NotImplementedError):
-        url = None
-
-    if url:
-        return url
-
-    try:
         file_name = file_field.name or ''
     except AttributeError:
         file_name = ''
@@ -45,7 +37,10 @@ def get_public_image_url(file_field):
         return file_name
 
     if not getattr(settings, 'USE_CLOUDINARY_STORAGE', False):
-        return None
+        try:
+            return file_field.url
+        except (AttributeError, ValueError, NotImplementedError):
+            return None
 
     public_id = file_name
     suffix = Path(public_id).suffix.lower()
