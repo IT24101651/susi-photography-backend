@@ -92,84 +92,76 @@ def optimize_uploaded_image_file(
 
     extension = Path(file_name).suffix.lower()
     if extension in {'.jpg', '.jpeg'}:
-        format_variants = ['jpeg', 'webp']
+        output_format = 'jpeg'
+        output_extension = '.jpg'
     elif extension == '.webp':
-        format_variants = ['webp', 'jpeg']
+        output_format = 'webp'
+        output_extension = '.webp'
     elif extension == '.png':
-        format_variants = ['png', 'webp', 'jpeg']
+        output_format = 'png'
+        output_extension = '.png'
     else:
-        format_variants = ['jpeg', 'webp']
+        output_format = 'jpeg'
+        output_extension = '.jpg'
 
-    dimension_scales = [1.0, 0.85, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.15, 0.1]
-    quality_steps = [
-        quality,
-        max(quality - 10, 70),
-        max(quality - 20, 60),
-        max(quality - 30, 50),
-        max(quality - 40, 40),
-        max(quality - 50, 30),
-        max(quality - 60, 20),
+    attempt_plan = [
+        (1.0, quality),
     ]
+    if max_file_size is not None:
+        attempt_plan.extend([
+            (0.85, max(quality - 12, 70)),
+            (0.7, max(quality - 24, 60)),
+        ])
 
-    def _flatten_to_rgb(image):
-        if image.mode in ('RGBA', 'LA') or ('transparency' in image.info):
-            rgba = image.convert('RGBA')
-            background = Image.new('RGB', rgba.size, (255, 255, 255))
-            background.paste(rgba, mask=rgba.getchannel('A'))
-            return background
-        if image.mode not in ('RGB', 'L'):
-            return image.convert('RGB')
-        return image
+    def _save_image(image, current_quality):
+        save_kwargs = {'optimize': True}
 
-    for output_format in format_variants:
-        for scale in dimension_scales:
-            target_size = (
-                max(1, int(max_width * scale)),
-                max(1, int(max_height * scale)),
-            )
-            for current_quality in quality_steps:
-                try:
-                    with Image.open(BytesIO(raw_bytes)) as img:
-                        img = ImageOps.exif_transpose(img)
-                        img.thumbnail(target_size, Image.Resampling.LANCZOS)
+        if output_format == 'jpeg':
+            if image.mode in ('RGBA', 'LA') or ('transparency' in image.info):
+                rgba = image.convert('RGBA')
+                background = Image.new('RGB', rgba.size, (255, 255, 255))
+                background.paste(rgba, mask=rgba.getchannel('A'))
+                image = background
+            elif image.mode not in ('RGB', 'L'):
+                image = image.convert('RGB')
+            save_kwargs.update({
+                'format': 'JPEG',
+                'quality': current_quality,
+                'progressive': True,
+            })
+        elif output_format == 'webp':
+            if image.mode not in ('RGB', 'RGBA'):
+                image = image.convert('RGBA' if ('transparency' in image.info) else 'RGB')
+            save_kwargs.update({
+                'format': 'WEBP',
+                'quality': current_quality,
+                'method': 4,
+            })
+        else:
+            if image.mode not in ('RGB', 'RGBA', 'L'):
+                image = image.convert('RGBA')
+            save_kwargs.update({'format': 'PNG'})
 
-                        output_extension = extension
-                        save_kwargs = {'optimize': True}
+        output = BytesIO()
+        image.save(output, **save_kwargs)
+        return output.getvalue()
 
-                        if output_format == 'jpeg':
-                            img = _flatten_to_rgb(img)
-                            save_kwargs.update({
-                                'format': 'JPEG',
-                                'quality': current_quality,
-                                'progressive': True,
-                            })
-                            output_extension = '.jpg'
-                        elif output_format == 'webp':
-                            if img.mode not in ('RGB', 'RGBA'):
-                                img = img.convert('RGBA' if ('transparency' in img.info) else 'RGB')
-                            save_kwargs.update({
-                                'format': 'WEBP',
-                                'quality': current_quality,
-                                'method': 6,
-                            })
-                            output_extension = '.webp'
-                        elif output_format == 'png':
-                            if img.mode not in ('RGB', 'RGBA', 'L'):
-                                img = img.convert('RGBA')
-                            save_kwargs.update({'format': 'PNG'})
-                            output_extension = '.png'
+    for scale, current_quality in attempt_plan:
+        try:
+            with Image.open(BytesIO(raw_bytes)) as img:
+                img = ImageOps.exif_transpose(img)
+                target_size = (
+                    max(1, int(max_width * scale)),
+                    max(1, int(max_height * scale)),
+                )
+                img.thumbnail(target_size, Image.Resampling.LANCZOS)
+                data = _save_image(img, current_quality)
+                optimized_name = Path(file_name).with_suffix(output_extension).name
 
-                        output = BytesIO()
-                        img.save(output, **save_kwargs)
-                        data = output.getvalue()
-                        optimized_name = Path(file_name).with_suffix(output_extension).name
-
-                        if max_file_size is None:
-                            return ContentFile(data, name=optimized_name)
-                        if len(data) <= max_file_size:
-                            return ContentFile(data, name=optimized_name)
-                except (UnidentifiedImageError, OSError, ValueError):
-                    continue
+                if max_file_size is None or len(data) <= max_file_size:
+                    return ContentFile(data, name=optimized_name)
+        except (UnidentifiedImageError, OSError, ValueError):
+            continue
 
     return None
 

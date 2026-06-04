@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import (
     HeroSlide, PortfolioCategory, PortfolioImage, PackageCard,
@@ -84,6 +85,12 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
         required=False,
         allow_empty=True,
     )
+    gallery_upload_shoot_phases = serializers.ListField(
+        child=serializers.CharField(allow_blank=True),
+        write_only=True,
+        required=False,
+        allow_empty=True,
+    )
     removed_gallery_image_ids = serializers.ListField(
         child=serializers.IntegerField(),
         write_only=True,
@@ -93,7 +100,7 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PortfolioImage
-        fields = ['id', 'parent', 'category', 'title', 'subtitle', 'image', 'description', 'wedding_type', 'shoot_phase', 'is_featured', 'order', 'gallery_uploads', 'removed_gallery_image_ids']
+        fields = ['id', 'parent', 'category', 'title', 'subtitle', 'image', 'description', 'wedding_type', 'shoot_phase', 'is_featured', 'order', 'gallery_uploads', 'gallery_upload_shoot_phases', 'removed_gallery_image_ids']
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -126,39 +133,47 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         gallery_uploads = self._get_gallery_uploads(validated_data)
+        gallery_upload_phases = self._get_gallery_upload_shoot_phases(validated_data)
         validated_data.pop('removed_gallery_image_ids', [])
-        instance = super().create(validated_data)
-        self._create_gallery_images(instance, gallery_uploads)
+        with transaction.atomic():
+            instance = super().create(validated_data)
+            self._create_gallery_images(instance, gallery_uploads, gallery_upload_phases)
         return instance
 
     def update(self, instance, validated_data):
         gallery_uploads = self._get_gallery_uploads(validated_data)
+        gallery_upload_phases = self._get_gallery_upload_shoot_phases(validated_data)
         removed_gallery_image_ids = validated_data.pop('removed_gallery_image_ids', [])
         original_category_id = instance.category_id
-        instance = super().update(instance, validated_data)
-        gallery_updates = {
-            'category': instance.category,
-            'subtitle': instance.subtitle,
-            'description': instance.description,
-            'wedding_type': instance.wedding_type,
-        }
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+            gallery_updates = {
+                'category': instance.category,
+                'subtitle': instance.subtitle,
+                'description': instance.description,
+                'wedding_type': instance.wedding_type,
+            }
 
-        # Keep each gallery image's own shoot phase when editing the parent.
-        # Only clear it when the parent category changes, because the old phase
-        # value may no longer be valid for the new category.
-        if instance.category_id != original_category_id:
-            gallery_updates['shoot_phase'] = ''
+            # Keep each gallery image's own shoot phase when editing the parent.
+            # Only clear it when the parent category changes, because the old phase
+            # value may no longer be valid for the new category.
+            if instance.category_id != original_category_id:
+                gallery_updates['shoot_phase'] = ''
 
-        instance.gallery_images.update(**gallery_updates)
-        if removed_gallery_image_ids:
-            for gallery_image in instance.gallery_images.filter(id__in=removed_gallery_image_ids):
-                gallery_image.delete()
-        self._create_gallery_images(instance, gallery_uploads)
+            instance.gallery_images.update(**gallery_updates)
+            if removed_gallery_image_ids:
+                for gallery_image in instance.gallery_images.filter(id__in=removed_gallery_image_ids):
+                    gallery_image.delete()
+            self._create_gallery_images(instance, gallery_uploads, gallery_upload_phases)
         return instance
 
-    def _create_gallery_images(self, parent, gallery_uploads):
+    def _create_gallery_images(self, parent, gallery_uploads, gallery_upload_phases=None):
         existing_count = parent.gallery_images.count()
+        gallery_upload_phases = gallery_upload_phases or []
         for index, image in enumerate(gallery_uploads, start=1):
+            gallery_shoot_phase = gallery_upload_phases[index - 1] if index - 1 < len(gallery_upload_phases) else ''
+            if not gallery_shoot_phase:
+                gallery_shoot_phase = parent.shoot_phase if parent.category and parent.category.slug == 'wedding' else ''
             PortfolioImage.objects.create(
                 parent=parent,
                 category=parent.category,
@@ -167,7 +182,7 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
                 image=image,
                 description=parent.description,
                 wedding_type=parent.wedding_type,
-                shoot_phase=parent.shoot_phase,
+                shoot_phase=gallery_shoot_phase,
                 order=existing_count + index,
             )
 
@@ -183,6 +198,21 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
                 validated_data.pop('gallery_uploads', None)
                 return uploads
         return validated_data.pop('gallery_uploads', [])
+
+    def _get_gallery_upload_shoot_phases(self, validated_data):
+        request = self.context.get('request')
+        if request:
+            phases = []
+            if hasattr(request, 'data') and hasattr(request.data, 'getlist'):
+                phases = request.data.getlist('gallery_upload_shoot_phases')
+            if (not phases) and hasattr(request, 'data') and hasattr(request.data, 'get'):
+                single_phase = request.data.get('gallery_upload_shoot_phases')
+                if isinstance(single_phase, list):
+                    phases = single_phase
+            if phases:
+                validated_data.pop('gallery_upload_shoot_phases', None)
+                return phases
+        return validated_data.pop('gallery_upload_shoot_phases', [])
 
 
 class PackageCardSerializer(serializers.ModelSerializer):

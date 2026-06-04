@@ -30,6 +30,11 @@ class PortfolioImageWriteSerializerTests(TestCase):
             is_active=True,
         )
 
+    def _make_image_upload(self, name='photo.jpg', color='blue'):
+        buffer = BytesIO()
+        Image.new('RGB', (48, 48), color=color).save(buffer, format='JPEG', quality=85)
+        return SimpleUploadedFile(name, buffer.getvalue(), content_type='image/jpeg')
+
     def _create_wedding_parent_with_gallery(self):
         parent = PortfolioImage.objects.create(
             category=self.wedding_category,
@@ -51,6 +56,34 @@ class PortfolioImageWriteSerializerTests(TestCase):
             order=1,
         )
         return parent, child
+
+    def test_create_batches_gallery_uploads_with_matching_shoot_phases(self):
+        serializer = PortfolioImageWriteSerializer(
+            data={
+                'category': self.wedding_category.pk,
+                'title': 'Wedding Story',
+                'subtitle': '',
+                'description': 'Batch upload test',
+                'wedding_type': 'hindu',
+                'shoot_phase': '',
+                'order': 1,
+                'is_featured': False,
+                'image': self._make_image_upload('main.jpg', 'navy'),
+                'gallery_uploads': [
+                    self._make_image_upload('gallery-1.jpg', 'red'),
+                    self._make_image_upload('gallery-2.jpg', 'green'),
+                ],
+                'gallery_upload_shoot_phases': ['pre_wedding', 'wedding_day'],
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        parent = serializer.save()
+
+        gallery = list(parent.gallery_images.order_by('order'))
+        self.assertEqual(len(gallery), 2)
+        self.assertEqual([image.shoot_phase for image in gallery], ['pre_wedding', 'wedding_day'])
+        self.assertEqual([image.title for image in gallery], ['Wedding Story Gallery 1', 'Wedding Story Gallery 2'])
 
     def test_update_keeps_existing_gallery_shoot_phase_when_category_stays_same(self):
         parent, child = self._create_wedding_parent_with_gallery()
