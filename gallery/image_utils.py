@@ -26,6 +26,14 @@ def get_public_image_url(file_field):
         return None
 
     try:
+        url = file_field.url
+    except (AttributeError, ValueError, NotImplementedError):
+        url = None
+
+    if url:
+        return url
+
+    try:
         file_name = file_field.name or ''
     except AttributeError:
         file_name = ''
@@ -37,12 +45,9 @@ def get_public_image_url(file_field):
         return file_name
 
     if not getattr(settings, 'USE_CLOUDINARY_STORAGE', False):
-        try:
-            return file_field.url
-        except (AttributeError, ValueError, NotImplementedError):
-            return None
+        return None
 
-    public_id = file_name[6:] if file_name.startswith('media/') else file_name
+    public_id = file_name
     suffix = Path(public_id).suffix.lower()
     cloudinary_format = suffix.lstrip('.') if suffix in {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'} else None
 
