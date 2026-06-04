@@ -85,6 +85,34 @@ class PortfolioImageWriteSerializerTests(TestCase):
         self.assertEqual([image.shoot_phase for image in gallery], ['pre_wedding', 'wedding_day'])
         self.assertEqual([image.title for image in gallery], ['Wedding Story Gallery 1', 'Wedding Story Gallery 2'])
 
+    def test_create_batches_cloudinary_public_ids_with_matching_shoot_phases(self):
+        serializer = PortfolioImageWriteSerializer(
+            data={
+                'category': self.wedding_category.pk,
+                'title': 'Wedding Story',
+                'subtitle': '',
+                'description': 'Direct upload test',
+                'wedding_type': 'hindu',
+                'shoot_phase': '',
+                'order': 1,
+                'is_featured': False,
+                'image_public_id': 'portfolio/main-story',
+                'gallery_upload_public_ids': ['portfolio/gallery-1', 'portfolio/gallery-2'],
+                'gallery_upload_shoot_phases': ['pre_wedding', 'wedding_day'],
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        parent = serializer.save()
+
+        parent.refresh_from_db()
+        self.assertEqual(parent.image.name, 'portfolio/main-story')
+
+        gallery = list(parent.gallery_images.order_by('order'))
+        self.assertEqual(len(gallery), 2)
+        self.assertEqual([image.image.name for image in gallery], ['portfolio/gallery-1', 'portfolio/gallery-2'])
+        self.assertEqual([image.shoot_phase for image in gallery], ['pre_wedding', 'wedding_day'])
+
     def test_update_keeps_existing_gallery_shoot_phase_when_category_stays_same(self):
         parent, child = self._create_wedding_parent_with_gallery()
 

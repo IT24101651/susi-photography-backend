@@ -79,8 +79,15 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     image = serializers.ImageField(required=False)
+    image_public_id = serializers.CharField(write_only=True, required=False, allow_blank=True)
     gallery_uploads = serializers.ListField(
         child=serializers.ImageField(),
+        write_only=True,
+        required=False,
+        allow_empty=True,
+    )
+    gallery_upload_public_ids = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
         write_only=True,
         required=False,
         allow_empty=True,
@@ -100,7 +107,12 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PortfolioImage
-        fields = ['id', 'parent', 'category', 'title', 'subtitle', 'image', 'description', 'wedding_type', 'shoot_phase', 'is_featured', 'order', 'gallery_uploads', 'gallery_upload_shoot_phases', 'removed_gallery_image_ids']
+        fields = [
+            'id', 'parent', 'category', 'title', 'subtitle', 'image', 'image_public_id',
+            'description', 'wedding_type', 'shoot_phase', 'is_featured', 'order',
+            'gallery_uploads', 'gallery_upload_public_ids', 'gallery_upload_shoot_phases',
+            'removed_gallery_image_ids',
+        ]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -132,19 +144,27 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        image_public_id = validated_data.pop('image_public_id', '')
         gallery_uploads = self._get_gallery_uploads(validated_data)
+        gallery_upload_public_ids = self._get_gallery_upload_public_ids(validated_data)
         gallery_upload_phases = self._get_gallery_upload_shoot_phases(validated_data)
         validated_data.pop('removed_gallery_image_ids', [])
+        if image_public_id:
+            validated_data['image'] = image_public_id
         with transaction.atomic():
             instance = super().create(validated_data)
-            self._create_gallery_images(instance, gallery_uploads, gallery_upload_phases)
+            self._create_gallery_images(instance, gallery_uploads, gallery_upload_public_ids, gallery_upload_phases)
         return instance
 
     def update(self, instance, validated_data):
+        image_public_id = validated_data.pop('image_public_id', '')
         gallery_uploads = self._get_gallery_uploads(validated_data)
+        gallery_upload_public_ids = self._get_gallery_upload_public_ids(validated_data)
         gallery_upload_phases = self._get_gallery_upload_shoot_phases(validated_data)
         removed_gallery_image_ids = validated_data.pop('removed_gallery_image_ids', [])
         original_category_id = instance.category_id
+        if image_public_id:
+            validated_data['image'] = image_public_id
         with transaction.atomic():
             instance = super().update(instance, validated_data)
             gallery_updates = {
@@ -164,13 +184,17 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
             if removed_gallery_image_ids:
                 for gallery_image in instance.gallery_images.filter(id__in=removed_gallery_image_ids):
                     gallery_image.delete()
-            self._create_gallery_images(instance, gallery_uploads, gallery_upload_phases)
+            self._create_gallery_images(instance, gallery_uploads, gallery_upload_public_ids, gallery_upload_phases)
         return instance
 
-    def _create_gallery_images(self, parent, gallery_uploads, gallery_upload_phases=None):
+    def _create_gallery_images(self, parent, gallery_uploads, gallery_upload_public_ids=None, gallery_upload_phases=None):
         existing_count = parent.gallery_images.count()
         gallery_upload_phases = gallery_upload_phases or []
-        for index, image in enumerate(gallery_uploads, start=1):
+        gallery_upload_public_ids = gallery_upload_public_ids or []
+        gallery_sources = gallery_upload_public_ids or gallery_uploads or []
+
+        for index, image in enumerate(gallery_sources, start=1):
+            gallery_image = image
             gallery_shoot_phase = gallery_upload_phases[index - 1] if index - 1 < len(gallery_upload_phases) else ''
             if not gallery_shoot_phase:
                 gallery_shoot_phase = parent.shoot_phase if parent.category and parent.category.slug == 'wedding' else ''
@@ -179,7 +203,7 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
                 category=parent.category,
                 title=f'{parent.title} Gallery {existing_count + index}',
                 subtitle=parent.subtitle,
-                image=image,
+                image=gallery_image,
                 description=parent.description,
                 wedding_type=parent.wedding_type,
                 shoot_phase=gallery_shoot_phase,
@@ -198,6 +222,21 @@ class PortfolioImageWriteSerializer(serializers.ModelSerializer):
                 validated_data.pop('gallery_uploads', None)
                 return uploads
         return validated_data.pop('gallery_uploads', [])
+
+    def _get_gallery_upload_public_ids(self, validated_data):
+        request = self.context.get('request')
+        if request:
+            public_ids = []
+            if hasattr(request, 'data') and hasattr(request.data, 'getlist'):
+                public_ids = request.data.getlist('gallery_upload_public_ids')
+            if (not public_ids) and hasattr(request, 'data') and hasattr(request.data, 'get'):
+                single_public_id = request.data.get('gallery_upload_public_ids')
+                if isinstance(single_public_id, list):
+                    public_ids = single_public_id
+            if public_ids:
+                validated_data.pop('gallery_upload_public_ids', None)
+                return public_ids
+        return validated_data.pop('gallery_upload_public_ids', [])
 
     def _get_gallery_upload_shoot_phases(self, validated_data):
         request = self.context.get('request')
