@@ -1,9 +1,26 @@
+from pathlib import Path
+
 from django.conf import settings
 from django.db import models, transaction
+from django.core.files.storage import FileSystemStorage
+from django.utils.functional import cached_property
 from django.utils.text import slugify
 from django.core.validators import MinValueValidator, MaxValueValidator
 
 from .image_utils import optimize_uploaded_image_file
+
+
+class FrontendPublicHeroStorage(FileSystemStorage):
+    @cached_property
+    def base_location(self):
+        return str(getattr(
+            settings,
+            'FRONTEND_PUBLIC_ROOT',
+            Path(settings.BASE_DIR).parent / 'frontend' / 'public',
+        ))
+
+
+hero_public_storage = FrontendPublicHeroStorage(base_url='/')
 
 
 class OptimizedImageModelMixin(models.Model):
@@ -114,12 +131,17 @@ class SingletonModel(models.Model):
 
 class HeroSlide(OptimizedImageModelMixin, models.Model):
     optimized_image_fields = {
-        'image': {'max_width': 1920, 'max_height': 1280, 'quality': 76},
+        'image': {
+            'max_width': 1600,
+            'max_height': 1000,
+            'quality': 70,
+            'max_file_size': 750_000,
+        },
     }
 
     title = models.CharField(max_length=200)
     subtitle = models.CharField(max_length=300, blank=True)
-    image = models.ImageField(upload_to='hero/', blank=True, null=True)
+    image = models.ImageField(storage=hero_public_storage, upload_to='hero/', blank=True, null=True)
     order = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

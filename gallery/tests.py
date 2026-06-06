@@ -313,7 +313,7 @@ class PublicImageUrlHelperTests(TestCase):
 
 class ImageOptimizationUploadTests(TestCase):
     def test_uploaded_images_are_resized_before_storage(self):
-        with TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+        with TemporaryDirectory() as public_root, override_settings(FRONTEND_PUBLIC_ROOT=public_root):
             image = Image.new('RGB', (3200, 2400), color='red')
             buffer = BytesIO()
             image.save(buffer, format='JPEG', quality=95)
@@ -326,9 +326,9 @@ class ImageOptimizationUploadTests(TestCase):
                 is_active=True,
             )
 
-            stored_path = Path(media_root) / slide.image.name
+            stored_path = Path(public_root) / slide.image.name
             self.assertTrue(stored_path.exists())
 
             with Image.open(stored_path) as stored_image:
-                self.assertLessEqual(stored_image.size[0], 1920)
-                self.assertLessEqual(stored_image.size[1], 1280)
+                self.assertLessEqual(stored_image.size[0], 1600)
+                self.assertLessEqual(stored_image.size[1], 1000)

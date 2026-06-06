@@ -36,13 +36,22 @@ def get_public_image_url(file_field):
     if file_name.startswith(('http://', 'https://')):
         return file_name
 
+    public_id = file_name[6:] if file_name.startswith('media/') else file_name
+
+    storage = getattr(file_field, 'storage', None)
+    storage_module = storage.__class__.__module__ if storage else ''
+    if storage and 'cloudinary' not in storage_module:
+        try:
+            return file_field.url
+        except (AttributeError, ValueError, NotImplementedError):
+            return None
+
     if not getattr(settings, 'USE_CLOUDINARY_STORAGE', False):
         try:
             return file_field.url
         except (AttributeError, ValueError, NotImplementedError):
             return None
 
-    public_id = file_name
     suffix = Path(public_id).suffix.lower()
     cloudinary_format = suffix.lstrip('.') if suffix in {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'} else None
 

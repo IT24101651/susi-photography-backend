@@ -137,5 +137,6 @@ if USE_CLOUDINARY_STORAGE:
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+FRONTEND_PUBLIC_ROOT = BASE_DIR.parent / 'frontend' / 'public'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
